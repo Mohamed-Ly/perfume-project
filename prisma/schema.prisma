@@ -1,0 +1,381 @@
+datasource db {
+  provider = "mysql"
+  // url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  CUSTOMER
+}
+
+model User {
+  id            Int            @id @default(autoincrement())
+  name          String
+  email         String         @unique
+  phone         String         @unique
+  password      String
+  role          Role           @default(CUSTOMER) // ✅ جديد
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  refreshTokens RefreshToken[]
+  cart          Cart?
+  Order         Order[]
+  Wishlist      Wishlist?
+  Notification  Notification[]
+  DeviceToken   DeviceToken[]
+}
+
+model Brand {
+  id         Int          @id @default(autoincrement())
+  name       String       @unique
+  slug       String       @unique
+  country    String?
+  isActive   Boolean      @default(true)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  products   Product[]
+  OfferBrand OfferBrand[]
+
+  @@index([name])
+}
+
+model Category {
+  id              Int               @id @default(autoincrement())
+  name            String
+  slug            String            @unique
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  products        Product[]
+  ProductCategory ProductCategory[]
+  OfferCategory   OfferCategory[]
+
+  @@index([name])
+}
+
+model Product {
+  id          Int      @id @default(autoincrement())
+  name        String
+  slug        String   @unique
+  description String?
+  brandId     Int
+  categoryId  Int // ✅ تصنيف واحد لكل منتج
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  brand           Brand             @relation(fields: [brandId], references: [id])
+  category        Category          @relation(fields: [categoryId], references: [id])
+  images          ProductImage[]
+  ProductCategory ProductCategory[]
+  ProductVariant  ProductVariant[]
+  WishlistItem    WishlistItem[]
+  OfferProduct    OfferProduct[]
+
+  @@index([brandId])
+  @@index([categoryId])
+  @@index([name])
+}
+
+model ProductImage {
+  id        Int      @id @default(autoincrement())
+  productId Int
+  path      String
+  isPrimary Boolean  @default(false)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([productId])
+}
+
+// لبمتغيرات الخاصة بالمنتج مثل السعر/التركيز للعطر/المخزون/الكود أو الباركود
+model ProductVariant {
+  id            Int      @id @default(autoincrement())
+  productId     Int
+  sizeMl        Int? // مثال: 50، 100 (اختياري)
+  concentration String? // مثال: "EDP", "EDT" (اختياري)
+  priceCents    Int // السعر بـالسنت/القرش (إلزامي >= 0)
+  stockQty      Int      @default(0) // المخزون (>= 0)
+  sku           String? // كود داخلي (اختياري)
+  barcode       String? // باركود (اختياري)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  product   Product     @relation(fields: [productId], references: [id])
+  CartItem  CartItem[]
+  OrderItem OrderItem[]
+
+  @@unique([productId, sizeMl, concentration]) // يمنع تكرار نفس (الحجم + التركيز) لنفس المنتج
+  @@index([productId])
+  @@index([sku])
+  @@index([barcode])
+}
+
+model ProductCategory {
+  productId  Int
+  categoryId Int
+  product    Product  @relation(fields: [productId], references: [id])
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  @@id([productId, categoryId]) // ✅ مفتاح مركّب + فريد
+  @@index([categoryId])
+}
+
+model Cart {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User       @relation(fields: [userId], references: [id])
+  items CartItem[]
+}
+
+model CartItem {
+  id        Int      @id @default(autoincrement())
+  cartId    Int
+  variantId Int
+  qty       Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cart    Cart           @relation(fields: [cartId], references: [id])
+  variant ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([cartId, variantId]) // كل Variant مرة واحدة داخل نفس السلة
+  @@index([variantId])
+}
+
+enum OrderStatus {
+  PENDING // قيد المراجعة
+  CONFIRMED // مؤكد
+  SHIPPING // قيد الشحن
+  DELIVERED // تم التسليم
+  CANCELLED // ملغي
+}
+
+model Order {
+  id         Int         @id @default(autoincrement())
+  userId     Int
+  status     OrderStatus @default(PENDING)
+  totalCents Int // الإجمالي بالسنت
+  currency   String      @default("SAR")
+
+  // معلومات الشحن (مدمجة مع الطلب كما طلبت)
+  shippingName    String
+  shippingPhone   String
+  shippingAddress String // العنوان كامل كما هو
+
+  cancelDeadline  DateTime? // آخر للإلغاء (24 ساعة) هاذا الوقت خاص بالمستخدم
+  cancelledByUser Boolean   @default(false) // هل ألغاه المستخدم؟
+
+  // التتبع
+  orderNumber     String    @unique // رقم طلب مميز
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  cancelledAt     DateTime? // وقت الإلغاء
+  cancelledReason String? // سبب الإلغاء
+
+  // العلاقات
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items OrderItem[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id             Int @id @default(autoincrement())
+  orderId        Int
+  variantId      Int
+  unitPriceCents Int // السعر وقت الطلب
+  qty            Int // الكمية
+
+  // العلاقات
+  order   Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@index([orderId])
+  @@index([variantId])
+}
+
+model Wishlist {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique // كل مستخدم لديه wishlist واحدة
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User           @relation(fields: [userId], references: [id])
+  items WishlistItem[]
+}
+
+model WishlistItem {
+  id         Int      @id @default(autoincrement())
+  wishlistId Int
+  productId  Int // نربط بالمنتج مباشرة (ليس بالـ variant)
+  createdAt  DateTime @default(now())
+
+  wishlist Wishlist @relation(fields: [wishlistId], references: [id])
+  product  Product  @relation(fields: [productId], references: [id])
+
+  @@unique([wishlistId, productId]) // كل منتج مرة واحدة في الـ wishlist
+  @@index([productId])
+}
+
+enum NotificationType {
+  ORDER_CREATED // تم إنشاء طلب جديد
+  ORDER_CONFIRMED // تم تأكيد الطلب
+  ORDER_SHIPPED // تم شحن الطلب
+  ORDER_DELIVERED // تم التسليم
+  ORDER_CANCELLED // تم إلغاء الطلب
+  LOW_STOCK // مخزون منخفض
+  PROMOTIONAL // إشعار ترويجي
+  SYSTEM // إشعار نظام
+}
+
+model Notification {
+  id        Int              @id @default(autoincrement())
+  userId    Int? // إذا كان null يعني إشعار عام لجميع المستخدمين
+  type      NotificationType
+  title     String
+  body      String
+  data      Json? // بيانات إضافية (مثل orderId, productId, إلخ)
+  isRead    Boolean          @default(false)
+  isPush    Boolean          @default(false) // إذا تم إرساله كـ push notification
+  sentAt    DateTime? // وقت الإرسال الفعلي
+  createdAt DateTime         @default(now())
+  readAt    DateTime? // وقت القراءة
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([type])
+  @@index([isRead])
+  @@index([createdAt])
+  @@index([userId, isRead])
+}
+
+model DeviceToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  token     String   @unique
+  platform  String? // "android" | "ios" | "web"
+  lang      String? // "ar" | "en" ...
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+enum OfferType {
+  DISCOUNT_PERCENTAGE // خصم بنسبة مئوية
+  DISCOUNT_AMOUNT // خصم مبلغ ثابت
+  BUY_ONE_GET_ONE // اشتري واحد واحصل على الآخر
+  FREE_SHIPPING // شحن مجاني
+  SPECIAL_OFFER // عرض خاص
+}
+
+enum OfferTarget {
+  ALL_PRODUCTS // جميع المنتجات
+  SPECIFIC_PRODUCTS // منتجات محددة
+  SPECIFIC_CATEGORIES // تصنيفات محددة
+  SPECIFIC_BRANDS // ماركات محددة
+}
+
+model Offer {
+  id          Int         @id @default(autoincrement())
+  title       String
+  description String?
+  image       String? // صورة العرض للسلايدر
+  offerType   OfferType
+  target      OfferTarget @default(ALL_PRODUCTS)
+
+  // تفاصيل الخصم
+  discountPercentage Int? // نسبة الخصم (مثال: 20 لـ 20%)
+  discountAmount     Int? // مبلغ الخصم (بالسنت)
+  minPurchaseAmount  Int? // حد أدنى للشراء
+  maxDiscountAmount  Int? // حد أقصى للخصم
+
+  // التواريخ
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean  @default(true)
+
+  // التتبع
+  clickCount   Int      @default(0) // عدد النقرات على العرض
+  displayOrder Int      @default(0) // ترتيب العرض في السلايدر
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // العلاقات للعروض المحددة
+  offerProducts   OfferProduct[]
+  offerCategories OfferCategory[]
+  offerBrands     OfferBrand[]
+
+  @@index([isActive])
+  @@index([startDate, endDate])
+  @@index([displayOrder])
+}
+
+// العروض للمنتجات المحددة
+model OfferProduct {
+  id        Int @id @default(autoincrement())
+  offerId   Int
+  productId Int
+
+  offer   Offer   @relation(fields: [offerId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([offerId, productId])
+  @@index([productId])
+}
+
+// العروض للتصنيفات المحددة
+model OfferCategory {
+  id         Int @id @default(autoincrement())
+  offerId    Int
+  categoryId Int
+
+  offer    Offer    @relation(fields: [offerId], references: [id])
+  category Category @relation(fields: [categoryId], references: [id])
+
+  @@unique([offerId, categoryId])
+  @@index([categoryId])
+}
+
+// العروض للماركات المحددة
+model OfferBrand {
+  id      Int @id @default(autoincrement())
+  offerId Int
+  brandId Int
+
+  offer Offer @relation(fields: [offerId], references: [id])
+  brand Brand @relation(fields: [brandId], references: [id])
+
+  @@unique([offerId, brandId])
+  @@index([brandId])
+}
+
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  tokenHash String    @unique
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
