@@ -5,7 +5,7 @@
   "scripts": {
     "run:dev": "nodemon app.js",
     "build": "prisma generate",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate && prisma db push"
   },
   "keywords": [],
   "author": "",
